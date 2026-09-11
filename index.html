@@ -4,7 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#061421">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
 <title>Lagartija Nadadora · V11.3</title>
+<!-- Security hardening: escaped dynamic HTML, validated backups, CSP, local-only assets. -->
 <style>
 :root{
   --bg:#061421;--panel:#0c1c2c;--panel2:#10263b;--line:#23415d;
@@ -146,7 +148,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
 
 <div id="dynamicWeek" class="week"></div>
 
-<div class="notice"><b>V11.3 sobre V10.1:</b> conserva la experiencia de entrenamiento y agrega biblioteca, equipamiento, planificación adaptable, pasos y seguimiento de movilidad. Los cuadrados de arriba reflejan la semana configurada y su estado.</div>
+<div class="notice"><b>V11.3 · compilación segura:</b> conserva la experiencia de entrenamiento y agrega biblioteca, equipamiento, planificación adaptable, pasos y seguimiento de movilidad. Los cuadrados de arriba reflejan la semana configurada y su estado.</div>
 
 <nav class="tabs">
   <button class="tab active" data-tab="martes">Martes A</button>
@@ -211,6 +213,154 @@ const BAND_EX=new Set(["Rotación externa con banda","Remo sentado con banda"]);
 const ROWER=new Set(["Remo suave","Remo continuo"]);
 let current="martes",timerInterval=null,timerRemaining=0,timerTotal=0,timerPaused=false,timerEndAt=0,timerMode="rest",timerContext=null,timerAdjustment=15,audioContext=null;
 
+
+/* Security helpers: any user/backup value rendered via innerHTML must pass here. */
+function escapeHtml(value){
+  return String(value ?? "")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#39;");
+}
+function escapeAttr(value){return escapeHtml(value).replaceAll("`","&#96;")}
+function normalizeUserText(value,max=2000){
+  return String(value ?? "")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g,"")
+    .slice(0,max);
+}
+function safeNum(value,min=0,max=1000000,fallback=0){
+  const n=Number(value);
+  return Number.isFinite(n)?Math.min(max,Math.max(min,n)):fallback;
+}
+function isPlainObject(v){return !!v&&typeof v==="object"&&!Array.isArray(v)}
+
+function sanitizeCustomExercisesValue(raw){
+  let arr;
+  try{arr=JSON.parse(raw)}catch(e){return "[]"}
+  if(!Array.isArray(arr))return "[]";
+  const cleaned=arr.slice(0,100).map(item=>{
+    if(!Array.isArray(item))return null;
+    const meta=isPlainObject(item[5])?item[5]:{};
+    const kind=["reps","time","minutes"].includes(meta.kind)?meta.kind:"reps";
+    const sourceId=typeof meta.sourceId==="string"?normalizeUserText(meta.sourceId,80):undefined;
+    const out=[
+      normalizeUserText(item[0],100)||"Ejercicio",
+      normalizeUserText(item[1],140),
+      typeof item[2]==="string"&&Object.prototype.hasOwnProperty.call(VISUALS,item[2])?item[2]:null,
+      Array.isArray(item[3])?item[3].slice(0,10).map(x=>normalizeUserText(x,350)):[],
+      normalizeUserText(item[4],600),
+      {
+        custom:true,
+        kind,
+        seconds:Math.round(safeNum(meta.seconds,5,3600,30)),
+        perSide:!!meta.perSide,
+        trackWeight:!!meta.trackWeight,
+        ...(sourceId?{sourceId}:{})
+      }
+    ];
+    return out;
+  }).filter(Boolean);
+  return JSON.stringify(cleaned)
+}
+
+function sanitizeSwimHistoryValue(raw){
+  let obj;
+  try{obj=JSON.parse(raw)}catch(e){return "{}"}
+  if(!isPlainObject(obj))return "{}";
+  const allowedStyles=new Set(["Crol","Espalda","Pecho","Mariposa"]);
+  const allowedExtras=new Set(["Técnica","Patada"]);
+  const clean={};
+  Object.entries(obj).slice(0,1000).forEach(([key,v])=>{
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(key)||!isPlainObject(v))return;
+    clean[key]={
+      date:key,
+      minutes:Math.round(safeNum(v.minutes,0,1440,0)),
+      rpe:Math.round(safeNum(v.rpe,0,10,0)),
+      distance:Math.round(safeNum(v.distance,0,100000,0)),
+      styles:Array.isArray(v.styles)?v.styles.filter(x=>allowedStyles.has(x)).slice(0,4):[],
+      extras:Array.isArray(v.extras)?v.extras.filter(x=>allowedExtras.has(x)).slice(0,2):[],
+      notes:normalizeUserText(v.notes,4000)
+    }
+  });
+  return JSON.stringify(clean)
+}
+
+function sanitizeProfileValue(raw){
+  let p;
+  try{p=JSON.parse(raw)}catch(e){return JSON.stringify(V11_DEFAULT_PROFILE)}
+  if(!isPlainObject(p))return JSON.stringify(V11_DEFAULT_PROFILE);
+  const eqAllowed=new Set(["peso corporal","mancuernas","banda elástica","remo ergómetro","banco","barra","barra dominadas","polea","paralelas","máquina","espaldera","bastón"]);
+  const days=a=>Array.isArray(a)?[...new Set(a.map(Number).filter(x=>Number.isInteger(x)&&x>=0&&x<=6))]:[];
+  const swimDays=days(p.swimDays);
+  const dryWeekdays=days(p.dryWeekdays).slice(0,3);
+  const equipment=Array.isArray(p.equipment)?p.equipment.filter(x=>eqAllowed.has(x)).slice(0,eqAllowed.size):[];
+  if(!equipment.includes("peso corporal"))equipment.unshift("peso corporal");
+  return JSON.stringify({
+    routineMode:p.routineMode==="adaptive"?"adaptive":"current",
+    swimDays,
+    dryWeekdays:dryWeekdays.length?dryWeekdays:[2,4,6],
+    equipment,
+    stepGoal:Math.round(safeNum(p.stepGoal,1000,100000,8000))
+  })
+}
+
+function sanitizeHistoryValue(raw){
+  let obj;
+  try{obj=JSON.parse(raw)}catch(e){return "{}"}
+  if(!isPlainObject(obj))return "{}";
+  const clean={};
+  Object.entries(obj).slice(0,3000).forEach(([key,r])=>{
+    if(typeof key!=="string"||key.length>100||!isPlainObject(r))return;
+    const items=Array.isArray(r.items)?r.items.slice(0,100).map(it=>{
+      if(!isPlainObject(it))return null;
+      return {
+        ...it,
+        name:normalizeUserText(it.name,100),
+        reps:safeNum(it.reps,0,100000,0),
+        weightKg:safeNum(it.weightKg,0,10000,0),
+        volume:safeNum(it.volume,0,10000000,0),
+        minutes:safeNum(it.minutes,0,1440,0)
+      }
+    }).filter(Boolean):[];
+    clean[key]={
+      ...r,
+      date:normalizeUserText(r.date,20),
+      plan:normalizeUserText(r.plan,140),
+      status:["completed","incomplete","missed","pending","untracked"].includes(r.status)?r.status:"pending",
+      notes:normalizeUserText(r.notes,4000),
+      items
+    }
+  });
+  return JSON.stringify(clean)
+}
+
+function sanitizeBackupStorage(storage){
+  if(!isPlainObject(storage))throw new Error("Respaldo sin almacenamiento válido.");
+  const entries=Object.entries(storage);
+  if(entries.length>5000)throw new Error("Respaldo demasiado grande.");
+  let total=0;
+  const out={};
+  for(const [key,value] of entries){
+    if(typeof key!=="string"||!/^rutina-v10[A-Za-z0-9:_|.-]*$/.test(key))continue;
+    if(typeof value!=="string")continue;
+    total+=value.length;
+    if(total>8_000_000)throw new Error("Respaldo excede el límite permitido.");
+    if(/^rutina-v10-custom-(martes|jueves|sabado)$/.test(key)){
+      out[key]=sanitizeCustomExercisesValue(value);
+    }else if(key===SWIM_KEY){
+      out[key]=sanitizeSwimHistoryValue(value);
+    }else if(key===V11_PROFILE_KEY){
+      out[key]=sanitizeProfileValue(value);
+    }else if(key===HISTORY_KEY){
+      out[key]=sanitizeHistoryValue(value);
+    }else{
+      out[key]=value.slice(0,1_000_000);
+    }
+  }
+  return out
+}
+
 function localISO(d=new Date()){const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),day=String(d.getDate()).padStart(2,"0");return `${y}-${m}-${day}`}
 function parseISO(s){const [y,m,d]=s.split("-").map(Number);return new Date(y,m-1,d,12)}
 function addDays(d,n){const x=new Date(d);x.setDate(x.getDate()+n);return x}
@@ -224,7 +374,10 @@ function scheduledDate(day){
   const wd=v11DryWeekday(day),use=wd===null?PLAN_WEEKDAY[day]:wd;
   return localISO(addDays(mondayOf(new Date()),use===0?6:use-1))
 }
-function activeDate(day){return localStorage.getItem(`rutina-v10-active-${day}`)||scheduledDate(day)}
+function activeDate(day){
+  const v=localStorage.getItem(`rutina-v10-active-${day}`);
+  return v&&/^\d{4}-\d{2}-\d{2}$/.test(v)?v:scheduledDate(day)
+}
 function setActiveDate(day,date){localStorage.setItem(`rutina-v10-active-${day}`,date);renderPlan(day)}
 function K(day,date,s){return `rutina-v10:${date}:${day}:${s}`}
 function EX(day,date,i,f){return K(day,date,`ex:${i}:${f}`)}
@@ -234,17 +387,38 @@ function HOLD(day,date,i,b){return EX(day,date,i,`hold:${b}`)}
 if(!localStorage.getItem(START_KEY))localStorage.setItem(START_KEY,localISO());
 
 function toast(msg){const e=document.getElementById("toast");e.textContent=msg;e.classList.add("show");clearTimeout(toast.t);toast.t=setTimeout(()=>e.classList.remove("show"),2200)}
-function history(){try{return JSON.parse(localStorage.getItem(HISTORY_KEY)||"{}")}catch(e){return {}}}
+function history(){try{return JSON.parse(sanitizeHistoryValue(localStorage.getItem(HISTORY_KEY)||"{}"))}catch(e){return {}}}
 function saveHistory(h){localStorage.setItem(HISTORY_KEY,JSON.stringify(h))}
-function swimHistory(){try{return JSON.parse(localStorage.getItem(SWIM_KEY)||"{}")}catch(e){return {}}}
+function swimHistory(){try{return JSON.parse(sanitizeSwimHistoryValue(localStorage.getItem(SWIM_KEY)||"{}"))}catch(e){return {}}}
 function saveSwimHistory(h){localStorage.setItem(SWIM_KEY,JSON.stringify(h))}
-function customExercises(day){try{return JSON.parse(localStorage.getItem(`rutina-v10-custom-${day}`)||"[]")}catch(e){return []}}
+function customExercises(day){try{return JSON.parse(sanitizeCustomExercisesValue(localStorage.getItem(`rutina-v10-custom-${day}`)||"[]"))}catch(e){return []}}
 function saveCustom(day,a){localStorage.setItem(`rutina-v10-custom-${day}`,JSON.stringify(a))}
 function v11Get(key,fallback){try{return JSON.parse(localStorage.getItem(key)||"null")??fallback}catch(e){return fallback}}
 function v11Set(key,val){localStorage.setItem(key,JSON.stringify(val))}
-function v11Profile(){return v11Get(V11_PROFILE_KEY,V11_DEFAULT_PROFILE)}
-function v11Steps(){return v11Get(V11_STEPS_KEY,{})}
-function v11Mobility(){return v11Get(V11_MOBILITY_KEY,{})}
+function v11Profile(){try{return JSON.parse(sanitizeProfileValue(localStorage.getItem(V11_PROFILE_KEY)||JSON.stringify(V11_DEFAULT_PROFILE)))}catch(e){return V11_DEFAULT_PROFILE}}
+function v11Steps(){
+  const raw=v11Get(V11_STEPS_KEY,{});
+  if(!isPlainObject(raw))return {};
+  const out={};
+  Object.entries(raw).slice(0,5000).forEach(([d,v])=>{
+    if(/^\d{4}-\d{2}-\d{2}$/.test(d))out[d]=Math.round(safeNum(v,0,1000000,0))
+  });
+  return out
+}
+function v11Mobility(){
+  const raw=v11Get(V11_MOBILITY_KEY,{});
+  if(!isPlainObject(raw))return {};
+  const out={};
+  Object.entries(raw).slice(0,5000).forEach(([d,v])=>{
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(d)||!isPlainObject(v))return;
+    out[d]={
+      hombros:safeNum(v.hombros,0,5,0),
+      tobillos:safeNum(v.tobillos,0,5,0),
+      toracica:safeNum(v.toracica,0,5,0)
+    }
+  });
+  return out
+}
 function v11AdaptivePlan(){return v11Get(V11_ADAPTIVE_KEY,{martes:[],jueves:[],sabado:[]})}
 function v11Exercise(id){return EXERCISE_LIBRARY.find(x=>x.id===id)}
 function v11Mode(){return v11Profile().routineMode||"current"}
@@ -342,8 +516,8 @@ function summaryChips(day,date,i){
 }
 function trackingFields(day,date,i,item){
   const name=item[0],out=[];
-  if(WEIGHTED.has(name)||item[5]?.trackWeight||item.custom&&item.trackWeight){const v=localStorage.getItem(EX(day,date,i,"weight"))||"",prev=previousItem(name,date);out.push(`<div class="field"><label>Peso / carga (kg)</label><input type="number" min="0" step="0.5" value="${v}" onchange="saveField('${day}',${i},'weight',this.value)"><small>${prev?.item?.weightKg?`Anterior ${prev.item.weightKg} kg`:"Sin carga previa"}</small></div>`)}
-  if(ROWER.has(name)||item.custom&&item.kind==="minutes"){const v=localStorage.getItem(EX(day,date,i,"minutes"))||"";out.push(`<div class="field"><label>Minutos reales</label><input type="number" min="0" step="1" value="${v}" onchange="saveField('${day}',${i},'minutes',this.value)"><small>Queda en historial</small></div>`)}
+  if(WEIGHTED.has(name)||item[5]?.trackWeight||item.custom&&item.trackWeight){const v=localStorage.getItem(EX(day,date,i,"weight"))||"",prev=previousItem(name,date);out.push(`<div class="field"><label>Peso / carga (kg)</label><input type="number" min="0" step="0.5" value="${escapeAttr(v)}" onchange="saveField('${day}',${i},'weight',this.value)"><small>${prev?.item?.weightKg?`Anterior ${prev.item.weightKg} kg`:"Sin carga previa"}</small></div>`)}
+  if(ROWER.has(name)||item.custom&&item.kind==="minutes"){const v=localStorage.getItem(EX(day,date,i,"minutes"))||"";out.push(`<div class="field"><label>Minutos reales</label><input type="number" min="0" step="1" value="${escapeAttr(v)}" onchange="saveField('${day}',${i},'minutes',this.value)"><small>Queda en historial</small></div>`)}
   if(BAND_EX.has(name)){const v=localStorage.getItem(EX(day,date,i,"band"))||"";out.push(`<div class="field"><label>Banda</label><select onchange="saveField('${day}',${i},'band',this.value)"><option value="">Elegir</option><option ${v==="Ligera"?"selected":""}>Ligera</option><option ${v==="Resistente"?"selected":""}>Resistente</option><option ${v==="Más resistente"?"selected":""}>Más resistente</option></select><small>Resistencia usada</small></div>`)}
   const rpe=localStorage.getItem(EX(day,date,i,"rpe"))||"",rir=localStorage.getItem(EX(day,date,i,"rir"))||"";
   out.push(`<div class="field"><label>RPE final</label><select onchange="saveField('${day}',${i},'rpe',this.value)"><option value="">—</option>${[5,6,7,8,9,10].map(x=>`<option value="${x}" ${String(x)===rpe?"selected":""}>${x}/10</option>`).join("")}</select><small>Esfuerzo percibido</small></div>`);
@@ -377,28 +551,29 @@ function seriesPanel(day,date,i,item){
   const count=sessionSetCount(day,date,i,item[1]);if(!count)return "";
   const cfg=timedCfg(day,i,item);
   if(cfg){const total=boutCount(cfg,count),dur=holdDuration(day,date,i,cfg),choices=cfg.min===cfg.max?[cfg.min]:Array.from({length:Math.floor((cfg.max-cfg.min)/5)+1},(_,x)=>cfg.min+x*5);
-    return `<div class="series-panel timed-panel">${setControls(day,date,i,item)}<div class="series-head"><span><b>Tiempo</b> · ${progress(day,date,i).done}/${total}</span><span class="rest-hint">🔔 automático</span></div><div class="duration-picker"><span>Duración:</span>${choices.map(s=>`<button class="duration-btn ${s===dur?"active":""}" onclick="setHoldDuration('${day}',${i},${s})">${s}s</button>`).join("")}</div><div class="hold-grid">${Array.from({length:total},(_,b)=>{const info=boutInfo(cfg,b),done=localStorage.getItem(HOLD(day,date,i,b))==="1";return `<button class="hold-btn ${done?"done":""}" onclick='startHold(${JSON.stringify(day)},${i},${b},${JSON.stringify(item[0])})'>${done?"✓":"▶"} ${info.label} · ${dur}s</button>`}).join("")}</div></div>`
+    return `<div class="series-panel timed-panel">${setControls(day,date,i,item)}<div class="series-head"><span><b>Tiempo</b> · ${progress(day,date,i).done}/${total}</span><span class="rest-hint">🔔 automático</span></div><div class="duration-picker"><span>Duración:</span>${choices.map(s=>`<button class="duration-btn ${s===dur?"active":""}" onclick="setHoldDuration('${day}',${i},${s})">${s}s</button>`).join("")}</div><div class="hold-grid">${Array.from({length:total},(_,b)=>{const info=boutInfo(cfg,b),done=localStorage.getItem(HOLD(day,date,i,b))==="1";return `<button class="hold-btn ${done?"done":""}" onclick='startHold(${JSON.stringify(day)},${i},${b},${escapeAttr(JSON.stringify(normalizeUserText(item[0],100)))})'>${done?"✓":"▶"} ${info.label} · ${dur}s</button>`}).join("")}</div></div>`
   }
   const rr=repRange(item[1]);
-  return `<div class="series-panel">${setControls(day,date,i,item)}<div class="series-head"><span><b>Series reales</b></span><span class="rest-hint">⏱ descanso al terminar</span></div><div class="set-list">${Array.from({length:count},(_,s)=>{const reps=localStorage.getItem(REP(day,date,i,s))||"",done=localStorage.getItem(SET(day,date,i,s))==="1";return `<div class="set-row"><div class="set-label">S${s+1}</div><div class="rep-input"><button onclick="stepReps('${day}',${i},${s},-1)">−</button><input type="number" min="0" inputmode="numeric" value="${reps}" placeholder="${rr.max||"reps"}" onchange="saveReps('${day}',${i},${s},this.value)"><button onclick="stepReps('${day}',${i},${s},1)">+</button></div><button class="finish-set ${done?"done":""}" onclick='finishSet(${JSON.stringify(day)},${i},${s},${JSON.stringify(item[0])})'>${done?"✓ Hecha":"Terminar"}</button></div>`}).join("")}</div></div>`
+  return `<div class="series-panel">${setControls(day,date,i,item)}<div class="series-head"><span><b>Series reales</b></span><span class="rest-hint">⏱ descanso al terminar</span></div><div class="set-list">${Array.from({length:count},(_,s)=>{const reps=localStorage.getItem(REP(day,date,i,s))||"",done=localStorage.getItem(SET(day,date,i,s))==="1";return `<div class="set-row"><div class="set-label">S${s+1}</div><div class="rep-input"><button onclick="stepReps('${day}',${i},${s},-1)">−</button><input type="number" min="0" inputmode="numeric" value="${escapeAttr(reps)}" placeholder="${rr.max||"reps"}" onchange="saveReps('${day}',${i},${s},this.value)"><button onclick="stepReps('${day}',${i},${s},1)">+</button></div><button class="finish-set ${done?"done":""}" onclick='finishSet(${JSON.stringify(day)},${i},${s},${escapeAttr(JSON.stringify(normalizeUserText(item[0],100)))})'>${done?"✓ Hecha":"Terminar"}</button></div>`}).join("")}</div></div>`
 }
 function card(day,date,item,i){
   const p=progress(day,date,i),skip=skipReason(day,date,i),custom=!!item.custom,img=item[2],hasImage=!!img&&!!VISUALS[img];
-  const visual=hasImage?`<img src="${VISUALS[img]}" alt="${item[0]}"><span class="zoom">Ampliar</span>`:`<div class="custom-visual">+</div>`;
-  return `<article class="exercise ${p.complete?"done":""} ${skip?"skipped":""}"><div class="visual" ${hasImage?`onclick="openModal('${img}')"`:""}>${visual}</div><div class="cardbody"><div class="row"><div><span class="num">${i+1}</span><h3>${item[0]}</h3><div class="meta">${item[1]}</div>${skip?`<span class="skipped-label">Omitido · ${skip}</span>`:""}</div><input class="check" type="checkbox" ${p.complete?"checked":""} onchange="toggleWhole('${day}',${i},this.checked)"></div>${summaryChips(day,date,i)}${trackingFields(day,date,i,item)}${skip?"":seriesPanel(day,date,i,item)}<div class="actions"><button onclick="toggleDetails(this)">Ver técnica</button>${hasImage?`<button onclick="openModal('${img}')">Ampliar</button>`:""}<button class="skip-btn" onclick="skipExercise('${day}',${i})">${skip?"Reactivar":"Omitir"}</button><button class="remove-routine-btn" onclick="v11RemoveRoutineExercise('${day}',${i})">Quitar de rutina</button></div><div class="details"><ol>${item[3].map(s=>`<li>${s}</li>`).join("")}</ol><div class="tip"><b>Punto clave:</b> ${item[4]}</div></div></div></article>`
+  const name=escapeHtml(item[0]),meta=escapeHtml(item[1]),skipSafe=escapeHtml(skip);
+  const visual=hasImage?`<img src="${VISUALS[img]}" alt="${escapeAttr(item[0])}"><span class="zoom">Ampliar</span>`:`<div class="custom-visual">+</div>`;
+  return `<article class="exercise ${p.complete?"done":""} ${skip?"skipped":""}"><div class="visual" ${hasImage?`onclick="openModal('${img}')"`:""}>${visual}</div><div class="cardbody"><div class="row"><div><span class="num">${i+1}</span><h3>${name}</h3><div class="meta">${meta}</div>${skip?`<span class="skipped-label">Omitido · ${skipSafe}</span>`:""}</div><input class="check" type="checkbox" ${p.complete?"checked":""} onchange="toggleWhole('${day}',${i},this.checked)"></div>${summaryChips(day,date,i)}${trackingFields(day,date,i,item)}${skip?"":seriesPanel(day,date,i,item)}<div class="actions"><button onclick="toggleDetails(this)">Ver técnica</button>${hasImage?`<button onclick="openModal('${img}')">Ampliar</button>`:""}<button class="skip-btn" onclick="skipExercise('${day}',${i})">${skip?"Reactivar":"Omitir"}</button><button class="remove-routine-btn" onclick="v11RemoveRoutineExercise('${day}',${i})">Quitar de rutina</button></div><div class="details"><ol>${(Array.isArray(item[3])?item[3]:[]).map(s=>`<li>${escapeHtml(s)}</li>`).join("")}</ol><div class="tip"><b>Punto clave:</b> ${escapeHtml(item[4])}</div></div></div></article>`
 }
 function renderPlan(day){
   const date=activeDate(day),p=BASE_PLANS[day],st=sessionState(day,date),s=document.getElementById(day),items=planItems(day),adaptive=v11Mode()==="adaptive";
   const title=adaptive?`${V11_DAY_NAMES[v11DryWeekday(day)]} · ${day==="martes"?"Fuerza A":day==="jueves"?"Fuerza B":"Movilidad / Core"}`:p.title;
   const focus=adaptive?"Selección adaptable según tu equipamiento y días de piscina. Puedes modificarla desde Biblioteca.":p.focus;
-  s.innerHTML=`<div class="planhead"><div class="phrow"><div><h2>${title}</h2><p>${focus}</p><span class="mode-badge ${adaptive?"adaptive":""}">${adaptive?"Modo adaptable":"Base V10.1"}</span></div><span class="time">${p.time}</span></div><div class="session-tools"><label>Fecha</label><input type="date" value="${date}" onchange="setActiveDate('${day}',this.value)"><span class="status-chip ${st.complete?"complete":st.activity?"incomplete":""}">${st.complete?"✓ Resuelta":st.activity?"En progreso":"Sin iniciar"}</span></div><div class="progressrow"><span>Progreso</span><span>${st.resolved} / ${st.total}</span></div><div class="progress"><i style="width:${100*st.resolved/st.total}%"></i></div></div>${items.map((x,i)=>card(day,date,x,i)).join("")}<button class="add-exercise" onclick="openCustomForm('${day}')">＋ Agregar ejercicio personalizado</button><div class="notes-box"><label>Notas de la sesión</label><textarea placeholder="Ej: peso fácil, hombro cargado, dormí poco..." oninput="saveNotes('${day}',this.value)">${localStorage.getItem(K(day,date,"notes"))||""}</textarea></div>`
+  s.innerHTML=`<div class="planhead"><div class="phrow"><div><h2>${title}</h2><p>${focus}</p><span class="mode-badge ${adaptive?"adaptive":""}">${adaptive?"Modo adaptable":"Base V10.1"}</span></div><span class="time">${p.time}</span></div><div class="session-tools"><label>Fecha</label><input type="date" value="${escapeAttr(date)}" onchange="setActiveDate('${day}',this.value)"><span class="status-chip ${st.complete?"complete":st.activity?"incomplete":""}">${st.complete?"✓ Resuelta":st.activity?"En progreso":"Sin iniciar"}</span></div><div class="progressrow"><span>Progreso</span><span>${st.resolved} / ${st.total}</span></div><div class="progress"><i style="width:${100*st.resolved/st.total}%"></i></div></div>${items.map((x,i)=>card(day,date,x,i)).join("")}<button class="add-exercise" onclick="openCustomForm('${day}')">＋ Agregar ejercicio personalizado</button><div class="notes-box"><label>Notas de la sesión</label><textarea maxlength="4000" placeholder="Ej: peso fácil, hombro cargado, dormí poco..." oninput="saveNotes('${day}',this.value)">${escapeHtml(localStorage.getItem(K(day,date,"notes"))||"")}</textarea></div>`
 }
 function updateHeader(day){const date=activeDate(day),st=sessionState(day,date),s=document.getElementById(day);if(!s)return;const chip=s.querySelector(".status-chip");if(chip){chip.className=`status-chip ${st.complete?"complete":st.activity?"incomplete":""}`;chip.textContent=st.complete?"✓ Resuelta":st.activity?"En progreso":"Sin iniciar"}const row=s.querySelector(".progressrow");if(row)row.lastElementChild.textContent=`${st.resolved} / ${st.total}`;const bar=s.querySelector(".progress i");if(bar)bar.style.width=`${100*st.resolved/st.total}%`}
 
 function saveField(day,i,f,v){const date=activeDate(day);setStarted(day,date);v===""?localStorage.removeItem(EX(day,date,i,f)):localStorage.setItem(EX(day,date,i,f),v);sync(day,date);renderPlan(day)}
 function saveReps(day,i,s,v){const date=activeDate(day);setStarted(day,date);v===""?localStorage.removeItem(REP(day,date,i,s)):localStorage.setItem(REP(day,date,i,s),String(Math.max(0,+v||0)));sync(day,date);renderPlan(day)}
 function stepReps(day,i,s,d){const date=activeDate(day),key=REP(day,date,i,s),cur=+localStorage.getItem(key)||0;localStorage.setItem(key,String(Math.max(0,cur+d)));setStarted(day,date);sync(day,date);renderPlan(day)}
-function saveNotes(day,v){const date=activeDate(day);setStarted(day,date);localStorage.setItem(K(day,date,"notes"),v);sync(day,date)}
+function saveNotes(day,v){v=normalizeUserText(v,4000);const date=activeDate(day);setStarted(day,date);localStorage.setItem(K(day,date,"notes"),v);sync(day,date)}
 function changeSets(day,i,d){const date=activeDate(day),item=planItems(day)[i],cur=sessionSetCount(day,date,i,item[1]),next=Math.max(1,Math.min(10,cur+d));localStorage.setItem(EX(day,date,i,"sets"),String(next));setStarted(day,date);sync(day,date);renderPlan(day)}
 function saveSetsAsBase(day,i){const date=activeDate(day),item=planItems(day)[i],n=sessionSetCount(day,date,i,item[1]);localStorage.setItem(`rutina-v10-base-sets:${day}:${i}`,String(n));toast(`${n} series guardadas como base`)}
 function changeRest(day,i,d){const date=activeDate(day),next=Math.max(0,Math.min(300,sessionRest(day,date,i)+d));localStorage.setItem(EX(day,date,i,"rest"),String(next));renderPlan(day)}
@@ -412,18 +587,26 @@ function completeHold(c){const date=activeDate(c.day);localStorage.setItem(HOLD(
 
 /* custom exercises */
 function openCustomForm(day){
-  const def=v11ActiveSlots().find(x=>x.slot===day),box=document.getElementById("formBox");box.innerHTML=`<h3>Agregar ejercicio${def?` · ${def.label}`:""}</h3><div class="form-grid"><div class="form-group"><label>Nombre</label><input id="cName" placeholder="Ej: Subida de talones"></div><div class="form-group"><label>Tipo</label><select id="cKind" onchange="customFormToggle()"><option value="reps">Repeticiones</option><option value="time">Tiempo / aguante</option><option value="minutes">Minutos</option></select></div><div class="form-group"><label>Series</label><input id="cSets" type="number" min="1" max="10" value="3"></div><div class="form-group" id="cTargetGroup"><label>Reps objetivo</label><input id="cTarget" type="number" min="1" value="12"></div><div class="form-group" id="cSecondsGroup" style="display:none"><label>Segundos</label><input id="cSeconds" type="number" min="5" value="30"></div><div class="form-group"><label>Descanso (s)</label><input id="cRest" type="number" min="0" value="60"></div><div class="form-group"><label>¿Registrar peso?</label><select id="cWeight"><option value="0">No</option><option value="1">Sí</option></select></div><div class="form-group"><label>Por lado</label><select id="cSide"><option value="0">No</option><option value="1">Sí</option></select></div></div><div class="form-actions"><button onclick="closeForm()">Cancelar</button><button class="primary" onclick="saveCustomExercise('${day}')">Agregar</button></div>`;document.getElementById("formModal").classList.add("open")
+  const def=v11ActiveSlots().find(x=>x.slot===day),box=document.getElementById("formBox");box.innerHTML=`<h3>Agregar ejercicio${def?` · ${def.label}`:""}</h3><div class="form-grid"><div class="form-group"><label>Nombre</label><input id="cName" maxlength="100" placeholder="Ej: Subida de talones"></div><div class="form-group"><label>Tipo</label><select id="cKind" onchange="customFormToggle()"><option value="reps">Repeticiones</option><option value="time">Tiempo / aguante</option><option value="minutes">Minutos</option></select></div><div class="form-group"><label>Series</label><input id="cSets" type="number" min="1" max="10" value="3"></div><div class="form-group" id="cTargetGroup"><label>Reps objetivo</label><input id="cTarget" type="number" min="1" value="12"></div><div class="form-group" id="cSecondsGroup" style="display:none"><label>Segundos</label><input id="cSeconds" type="number" min="5" value="30"></div><div class="form-group"><label>Descanso (s)</label><input id="cRest" type="number" min="0" value="60"></div><div class="form-group"><label>¿Registrar peso?</label><select id="cWeight"><option value="0">No</option><option value="1">Sí</option></select></div><div class="form-group"><label>Por lado</label><select id="cSide"><option value="0">No</option><option value="1">Sí</option></select></div></div><div class="form-actions"><button onclick="closeForm()">Cancelar</button><button class="primary" onclick="saveCustomExercise('${day}')">Agregar</button></div>`;document.getElementById("formModal").classList.add("open")
 }
 function customFormToggle(){const k=document.getElementById("cKind").value;document.getElementById("cTargetGroup").style.display=k==="reps"?"block":"none";document.getElementById("cSecondsGroup").style.display=k==="time"?"block":"none"}
-function saveCustomExercise(day){const name=document.getElementById("cName").value.trim();if(!name){alert("Ponle un nombre al ejercicio.");return}const kind=document.getElementById("cKind").value,sets=Math.max(1,+document.getElementById("cSets").value||1),target=Math.max(1,+document.getElementById("cTarget").value||1),seconds=Math.max(5,+document.getElementById("cSeconds").value||30),rest=Math.max(0,+document.getElementById("cRest").value||0),trackWeight=document.getElementById("cWeight").value==="1",perSide=document.getElementById("cSide").value==="1";const meta=kind==="reps"?`${sets} × ${target}${perSide?" por lado":""}`:kind==="time"?`${sets} × ${seconds} s${perSide?" por lado":""}`:`Minutos`;const item=[name,meta,null,["Realiza el ejercicio con técnica controlada.","Registra tus series o tiempo real.","Ajusta la carga solo si mantienes buena técnica."],"Ejercicio personalizado: prioriza calidad y progresión gradual.",{custom:true,kind,seconds,perSide,trackWeight}];const a=customExercises(day);a.push(item);saveCustom(day,a);const i=BASE_PLANS[day].items.length+a.length-1;localStorage.setItem(`rutina-v10-base-rest:${day}:${i}`,String(rest));closeForm();renderPlan(day);toast("Ejercicio agregado ✓")}
+function saveCustomExercise(day){const name=normalizeUserText(document.getElementById("cName").value.trim(),100);if(!name){alert("Ponle un nombre al ejercicio.");return}const kind=document.getElementById("cKind").value,sets=Math.max(1,+document.getElementById("cSets").value||1),target=Math.max(1,+document.getElementById("cTarget").value||1),seconds=Math.max(5,+document.getElementById("cSeconds").value||30),rest=Math.max(0,+document.getElementById("cRest").value||0),trackWeight=document.getElementById("cWeight").value==="1",perSide=document.getElementById("cSide").value==="1";const meta=kind==="reps"?`${sets} × ${target}${perSide?" por lado":""}`:kind==="time"?`${sets} × ${seconds} s${perSide?" por lado":""}`:`Minutos`;const item=[name,meta,null,["Realiza el ejercicio con técnica controlada.","Registra tus series o tiempo real.","Ajusta la carga solo si mantienes buena técnica."],"Ejercicio personalizado: prioriza calidad y progresión gradual.",{custom:true,kind,seconds,perSide,trackWeight}];const a=customExercises(day);a.push(item);saveCustom(day,a);const i=BASE_PLANS[day].items.length+a.length-1;localStorage.setItem(`rutina-v10-base-rest:${day}:${i}`,String(rest));closeForm();renderPlan(day);toast("Ejercicio agregado ✓")}
 function deleteCustom(day,i){if(!confirm("¿Eliminar este ejercicio personalizado de la rutina base?"))return;const idx=customIndex(day,i),a=customExercises(day);a.splice(idx,1);saveCustom(day,a);renderPlan(day);toast("Ejercicio eliminado")}
-function openChoice(title,text,options,cb){const box=document.getElementById("formBox");box.innerHTML=`<h3>${title}</h3><div class="notice">${text}</div><div class="form-actions" style="display:grid">${options.map(o=>`<button onclick='window._choice(${JSON.stringify(o)})'>${o}</button>`).join("")}</div><div class="form-actions"><button onclick="closeForm()">Cancelar</button></div>`;window._choice=(v)=>{closeForm();cb(v)};document.getElementById("formModal").classList.add("open")}
+function openChoice(title,text,options,cb){
+  const box=document.getElementById("formBox");
+  box.innerHTML=`<h3>${escapeHtml(title)}</h3><div class="notice">${escapeHtml(text)}</div><div class="form-actions" style="display:grid">${options.map(o=>`<button onclick='window._choice(${escapeAttr(JSON.stringify(normalizeUserText(o,200)))})'>${escapeHtml(o)}</button>`).join("")}</div><div class="form-actions"><button onclick="closeForm()">Cancelar</button></div>`;
+  window._choice=(v)=>{closeForm();cb(v)};
+  document.getElementById("formModal").classList.add("open")
+}
 function closeForm(){document.getElementById("formModal").classList.remove("open")}
 
 /* swim */
 function nextSwimDate(){const today=new Date();for(let n=0;n<7;n++){const d=addDays(today,n),js=d.getDay();if([1,3,5].includes(js))return localISO(d)}return localISO()}
 function v11SwimWeekStart(){const saved=localStorage.getItem(V11_SWIM_WEEK_KEY);return saved?parseISO(saved):mondayOf(new Date())}
-function v11SwimSelectedDate(){return localStorage.getItem("rutina-v10-v11-swim-date")||localISO()}
+function v11SwimSelectedDate(){
+  const v=localStorage.getItem("rutina-v10-v11-swim-date");
+  return v&&/^\d{4}-\d{2}-\d{2}$/.test(v)?v:localISO()
+}
 function selectSwimDate(date){localStorage.setItem("rutina-v10-v11-swim-date",date);renderSwim()}
 function shiftSwimWeek(days){const d=addDays(v11SwimWeekStart(),days);localStorage.setItem(V11_SWIM_WEEK_KEY,localISO(d));selectSwimDate(localISO(d))}
 function renderSwim(){
@@ -433,12 +616,12 @@ function renderSwim(){
   const styles=["Crol","Espalda","Pecho","Mariposa"],extras=["Técnica","Patada"];
   document.getElementById("swim").innerHTML=`<div class="swim-card"><h2>🏊 Registrar sesión de piscina</h2><p style="color:var(--muted);margin:0">Selecciona cualquier día de la semana. Los días de piscina del perfil sirven para planificación, pero puedes registrar una sesión en cualquier fecha.</p>
   <div class="week-nav"><button onclick="shiftSwimWeek(-7)">‹ Semana</button><strong>${fmtDate(localISO(mon))} → ${fmtDate(localISO(addDays(mon,6)))}</strong><button onclick="shiftSwimWeek(7)">Semana ›</button></div><div class="swim-week">${squares}</div>
-  <div class="swim-grid"><div class="swim-field"><label>Fecha seleccionada</label><input id="swDate" type="date" value="${selected}" onchange="selectSwimDate(this.value)"></div><div class="swim-field"><label>Duración (min)</label><input id="swMin" type="number" min="1" value="${existing.minutes||60}"></div><div class="swim-field"><label>RPE sesión</label><select id="swRpe">${[3,4,5,6,7,8,9,10].map(x=>`<option value="${x}" ${+existing.rpe===x?"selected":""}>${x}/10</option>`).join("")}</select></div><div class="swim-field"><label>Distancia (m) · opcional</label><input id="swDist" type="number" min="0" step="25" value="${existing.distance||""}" placeholder="Ej: 1500"></div>
+  <div class="swim-grid"><div class="swim-field"><label>Fecha seleccionada</label><input id="swDate" type="date" value="${escapeAttr(selected)}" onchange="selectSwimDate(this.value)"></div><div class="swim-field"><label>Duración (min)</label><input id="swMin" type="number" min="1" value="${escapeAttr(safeNum(existing.minutes,0,1440,60))}"></div><div class="swim-field"><label>RPE sesión</label><select id="swRpe">${[3,4,5,6,7,8,9,10].map(x=>`<option value="${x}" ${+existing.rpe===x?"selected":""}>${x}/10</option>`).join("")}</select></div><div class="swim-field"><label>Distancia (m) · opcional</label><input id="swDist" type="number" min="0" step="25" value="${escapeAttr(safeNum(existing.distance,0,100000,0)||"")}" placeholder="Ej: 1500"></div>
   <div class="swim-field" style="grid-column:1/-1"><label>Estilos de nado</label><div class="style-checks">${styles.map(x=>`<label><input type="checkbox" value="${x}" ${(existing.styles||[]).includes(x)?"checked":""}> ${x}</label>`).join("")}</div></div>
   <div class="swim-field" style="grid-column:1/-1"><label>Trabajo adicional · opcional</label><div class="style-checks extra-checks">${extras.map(x=>`<label><input type="checkbox" value="${x}" ${(existing.extras||[]).includes(x)?"checked":""}> ${x}</label>`).join("")}</div></div>
-  <div class="swim-field" style="grid-column:1/-1"><label>Notas</label><textarea id="swNotes" placeholder="Ej: crol más relajado, pecho costó...">${existing.notes||""}</textarea></div></div><div class="swim-actions"><button onclick="saveSwim()">Guardar sesión</button><button onclick="deleteSwim()">Borrar fecha</button></div></div>`
+  <div class="swim-field" style="grid-column:1/-1"><label>Notas</label><textarea id="swNotes" maxlength="4000" placeholder="Ej: crol más relajado, pecho costó...">${escapeHtml(existing.notes||"")}</textarea></div></div><div class="swim-actions"><button onclick="saveSwim()">Guardar sesión</button><button onclick="deleteSwim()">Borrar fecha</button></div></div>`
 }
-function saveSwim(){const date=document.getElementById("swDate").value,minutes=+document.getElementById("swMin").value||0,rpe=+document.getElementById("swRpe").value||0,distance=+document.getElementById("swDist").value||0,styles=[...document.querySelectorAll(".style-checks:not(.extra-checks) input:checked")].map(x=>x.value),extras=[...document.querySelectorAll(".extra-checks input:checked")].map(x=>x.value),notes=document.getElementById("swNotes").value.trim();const h=swimHistory();h[date]={date,minutes,rpe,distance,styles,extras,notes};saveSwimHistory(h);localStorage.setItem("rutina-v10-v11-swim-date",date);toast("Sesión de piscina guardada ✓");renderSwim();renderDynamicWeek();renderDashboard()}
+function saveSwim(){const date=document.getElementById("swDate").value,minutes=+document.getElementById("swMin").value||0,rpe=+document.getElementById("swRpe").value||0,distance=+document.getElementById("swDist").value||0,styles=[...document.querySelectorAll(".style-checks:not(.extra-checks) input:checked")].map(x=>x.value),extras=[...document.querySelectorAll(".extra-checks input:checked")].map(x=>x.value),notes=normalizeUserText(document.getElementById("swNotes").value.trim(),4000);const h=swimHistory();h[date]={date,minutes,rpe,distance,styles,extras,notes};saveSwimHistory(h);localStorage.setItem("rutina-v10-v11-swim-date",date);toast("Sesión de piscina guardada ✓");renderSwim();renderDynamicWeek();renderDashboard()}
 function deleteSwim(){const date=document.getElementById("swDate").value,h=swimHistory();delete h[date];saveSwimHistory(h);toast("Registro de piscina borrado");renderSwim();renderDynamicWeek();renderDashboard()}
 
 /* final summary */
@@ -528,7 +711,7 @@ function renderLibrary(){
   const oldQ=document.getElementById("v11LibSearch")?.value||"",oldCat=document.getElementById("v11LibCat")?.value||"⭐ Recomendados",oldOnly=document.getElementById("v11CompatibleOnly")?.checked??true,cats=["⭐ Recomendados","Todos",...new Set(EXERCISE_LIBRARY.map(x=>x.category))],p=v11Profile(),root=document.getElementById("library");if(!root)return;
   const filtered=v11LibraryFiltered();
   root.innerHTML=`<div class="dash-head"><h2>Biblioteca para nadadores</h2><p>${EXERCISE_LIBRARY.length} ejercicios. Los marcados con ⭐ son los que priorizaría como complemento general para natación por hombro, escápula, tracción, core y tren inferior.</p></div>
-  <div class="dash-card"><div class="library-tools"><input id="v11LibSearch" placeholder="Buscar ejercicio, músculo o equipo…" value="${oldQ.replace(/"/g,"&quot;")}" oninput="renderLibrary()"><select id="v11LibCat" onchange="renderLibrary()">${cats.map(c=>`<option ${c===oldCat?"selected":""}>${c}</option>`).join("")}</select><label class="choice-v11"><input id="v11CompatibleOnly" type="checkbox" ${oldOnly?"checked":""} onchange="renderLibrary()"> Solo compatible</label></div><div class="small">Equipo activo: ${p.equipment.join(", ")} · Días activos: ${v11ActiveSlots().map(x=>x.label).join(", ")}</div></div>
+  <div class="dash-card"><div class="library-tools"><input id="v11LibSearch" placeholder="Buscar ejercicio, músculo o equipo…" value="${escapeAttr(oldQ)}" oninput="renderLibrary()"><select id="v11LibCat" onchange="renderLibrary()">${cats.map(c=>`<option ${c===oldCat?"selected":""}>${c}</option>`).join("")}</select><label class="choice-v11"><input id="v11CompatibleOnly" type="checkbox" ${oldOnly?"checked":""} onchange="renderLibrary()"> Solo compatible</label></div><div class="small">Equipo activo: ${escapeHtml(p.equipment.join(", "))} · Días activos: ${v11ActiveSlots().map(x=>x.label).join(", ")}</div></div>
   <div class="library-grid">${filtered.map(ex=>`<article class="library-card"><img src="${VISUALS[ex.visualKey]}" alt="${ex.name}"><div class="library-body">${ex.recommended?`<span class="recommended-badge">⭐ Recomendado para nadadores</span>`:""}<h3>${ex.name}</h3><div class="library-tags"><span class="library-tag">${ex.category}</span>${ex.equipment.map(e=>`<span class="library-tag">${e}</span>`).join("")}</div><p><b>Principales:</b> ${ex.primary.join(", ")}</p><p><b>Para natación:</b> ${ex.swimUse}</p>${ex.recommended?`<p class="recommend-reason">${ex.recommendation}</p>`:""}<div class="library-source">${ex.page?`Guía · PDF pág. ${ex.page}`:"Complementario Lagartija Nadadora"}</div><div class="library-actions">${v11LibraryActionButtons(ex)}</div></div></article>`).join("")}${v11OtherExerciseCard()}</div>`
 }
 function v11AddLibraryExercise(day,id){
@@ -540,13 +723,13 @@ function v11AddLibraryExercise(day,id){
 function renderSettings(){
   const p=v11Profile(),eqs=["peso corporal","mancuernas","banda elástica","remo ergómetro","banco","barra","barra dominadas","polea","paralelas","máquina","espaldera","bastón"],days=[["Lunes",1],["Martes",2],["Miércoles",3],["Jueves",4],["Viernes",5],["Sábado",6],["Domingo",0]],root=document.getElementById("settings");if(!root)return;
   const active=v11ActiveSlots(),removedCount=Object.values(v11Removed()).reduce((a,x)=>a+x.length,0);
-  const manager=active.map(def=>`<div class="dash-card"><h3>${def.label}</h3><div class="routine-manager">${planItems(def.slot).map((item,i)=>`<div class="routine-manager-row"><div><b>${item[0]}</b><span>${item[1]}</span></div><button onclick="v11RemoveRoutineExercise('${def.slot}',${i})">Quitar</button></div>`).join("")||'<div class="empty">Sin ejercicios. Agrega desde Biblioteca.</div>'}</div></div>`).join("");
+  const manager=active.map(def=>`<div class="dash-card"><h3>${def.label}</h3><div class="routine-manager">${planItems(def.slot).map((item,i)=>`<div class="routine-manager-row"><div><b>${escapeHtml(item[0])}</b><span>${escapeHtml(item[1])}</span></div><button onclick="v11RemoveRoutineExercise('${def.slot}',${i})">Quitar</button></div>`).join("")||'<div class="empty">Sin ejercicios. Agrega desde Biblioteca.</div>'}</div></div>`).join("");
   root.innerHTML=`<div class="dash-head"><h2>Ajustes</h2><p>Configura piscina y entrenamiento por separado. Puedes entrenar 1, 2 o 3 días y editar la rutina de cada día.</p></div>
   <div class="dash-card"><h3>Modo de rutina</h3><div class="choice-grid-v11"><label class="choice-v11"><input type="radio" name="v11mode" value="current" ${p.routineMode!=="adaptive"?"checked":""}> Base V10.1</label><label class="choice-v11"><input type="radio" name="v11mode" value="adaptive" ${p.routineMode==="adaptive"?"checked":""}> Adaptable según equipo</label></div><span class="mode-badge ${p.routineMode==="adaptive"?"adaptive":""}">${p.routineMode==="adaptive"?"Adaptable activa":"Base V10.1 activa"}</span></div>
   <div class="dash-card"><h3>Días habituales de piscina</h3><div class="choice-grid-v11">${days.map(([n,d])=>`<label class="choice-v11"><input type="checkbox" data-v11swim="${d}" ${p.swimDays.includes(d)?"checked":""}> ${n}</label>`).join("")}</div></div>
   <div class="dash-card"><h3>Días de entrenamiento en seco</h3><div class="choice-grid-v11">${days.map(([n,d])=>`<label class="choice-v11"><input type="checkbox" data-v11dry="${d}" ${(p.dryWeekdays||[2,4,6]).includes(d)?"checked":""}> ${n}</label>`).join("")}</div><div class="training-days-note">Selecciona entre 1 y 3 días. Si coinciden con piscina, la semana superior mostrará la doble sesión.</div></div>
   <div class="dash-card"><h3>Equipamiento disponible</h3><div class="choice-grid-v11">${eqs.map(e=>`<label class="choice-v11"><input type="checkbox" data-v11eq="${e}" ${p.equipment.includes(e)?"checked":""}> ${e}</label>`).join("")}</div></div>
-  <div class="dash-card"><h3>Objetivo diario de pasos</h3><div class="settings-grid"><div class="field"><label>Pasos / día</label><input id="v11StepGoal" type="number" min="1000" step="500" value="${p.stepGoal||8000}"></div></div></div>
+  <div class="dash-card"><h3>Objetivo diario de pasos</h3><div class="settings-grid"><div class="field"><label>Pasos / día</label><input id="v11StepGoal" type="number" min="1000" step="500" value="${escapeAttr(safeNum(p.stepGoal,1000,100000,8000))}"></div></div></div>
   <div class="actions"><button class="primary" onclick="v11SaveSettings()">Guardar ajustes</button><button class="secondary" onclick="showSection('library')">Abrir Biblioteca</button>${removedCount?`<button class="secondary" onclick="v11RestoreRemoved()">Restaurar ${removedCount} quitado${removedCount===1?"":"s"}</button>`:""}</div>
   <div class="dash-head" style="margin-top:14px"><h2>Mi rutina</h2><p>Quita ejercicios aquí o desde la sesión. Para agregar usa Biblioteca u “Otro ejercicio”.</p></div>${manager}`
 }
@@ -576,18 +759,44 @@ function renderDashboard(){
   const recent=[...Object.values(history()).map(r=>({...r,type:"gym"})),...Object.values(swimHistory()).map(r=>({date:r.date,type:"swim",plan:"🏊 Piscina",status:"completed",durationSec:r.minutes*60,completedExercises:1,totalExercises:1,extra:`${r.minutes} min · RPE ${r.rpe}${r.distance?` · ${r.distance} m`:""}`}))].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,12);
   const stepStats=v11StepStats(ws,we),mobStats=v11MobilityStats(ws,we),todaySteps=v11Steps()[today]||0,goal=v11Profile().stepGoal||8000;
   s.innerHTML=`<div class="dash-head"><h2>📊 Dashboard</h2><p>Semana ${fmtDate(ws)} → ${fmtDate(we)}</p></div><div class="kpis"><div class="kpi good"><div class="v">${comp}</div><div class="l">Fuerza completas</div></div><div class="kpi warn"><div class="v">${part}</div><div class="l">Incompletas</div></div><div class="kpi bad"><div class="v">${miss}</div><div class="l">Omitidas</div></div><div class="kpi info"><div class="v">${compliance}%</div><div class="l">Cumplimiento</div></div><div class="kpi violet"><div class="v">${Math.round(vol)} kg</div><div class="l">Volumen</div></div><div class="kpi info"><div class="v">${swimMin} min</div><div class="l">Piscina</div></div></div>
-  <div class="dash-card"><h3>Pasos</h3><div class="kpis"><div class="kpi info"><div class="v">${todaySteps.toLocaleString("es-CL")}</div><div class="l">Hoy</div></div><div class="kpi good"><div class="v">${stepStats.avg.toLocaleString("es-CL")}</div><div class="l">Promedio semanal</div></div><div class="kpi violet"><div class="v">${stepStats.swimAvg.toLocaleString("es-CL")}</div><div class="l">Días de piscina</div></div><div class="kpi warn"><div class="v">${stepStats.dryAvg.toLocaleString("es-CL")}</div><div class="l">Días sin piscina</div></div></div><div class="progress"><i style="width:${Math.min(100,todaySteps/goal*100)}%"></i></div><div class="step-entry" style="margin-top:10px"><input id="v11StepDate" type="date" value="${today}"><input id="v11StepValue" type="number" min="0" placeholder="Pasos" value="${todaySteps||""}"><button onclick="v11SaveSteps()">Guardar pasos</button></div><div class="empty">HTML: registro manual. APK: se leerán automáticamente desde Android cuando implementemos el sensor/Health Connect.</div></div>
-  <div class="dash-card"><h3>Movilidad · auto-registro 1–5</h3><div class="kpis"><div class="kpi info"><div class="v">${mobStats.shoulder}</div><div class="l">Hombros</div></div><div class="kpi info"><div class="v">${mobStats.ankle}</div><div class="l">Tobillos</div></div><div class="kpi info"><div class="v">${mobStats.thoracic}</div><div class="l">Torácica</div></div></div><div class="mobility-entry"><input id="v11MobDate" type="date" value="${today}"><input id="v11MobShoulder" type="number" min="1" max="5" placeholder="Hombro 1–5"><input id="v11MobAnkle" type="number" min="1" max="5" placeholder="Tobillo 1–5"><input id="v11MobThoracic" type="number" min="1" max="5" placeholder="Torácica 1–5"></div><div class="actions"><button class="secondary" onclick="v11SaveMobility()">Guardar movilidad</button></div></div>
+  <div class="dash-card"><h3>Pasos</h3><div class="kpis"><div class="kpi info"><div class="v">${todaySteps.toLocaleString("es-CL")}</div><div class="l">Hoy</div></div><div class="kpi good"><div class="v">${stepStats.avg.toLocaleString("es-CL")}</div><div class="l">Promedio semanal</div></div><div class="kpi violet"><div class="v">${stepStats.swimAvg.toLocaleString("es-CL")}</div><div class="l">Días de piscina</div></div><div class="kpi warn"><div class="v">${stepStats.dryAvg.toLocaleString("es-CL")}</div><div class="l">Días sin piscina</div></div></div><div class="progress"><i style="width:${Math.min(100,todaySteps/goal*100)}%"></i></div><div class="step-entry" style="margin-top:10px"><input id="v11StepDate" type="date" value="${escapeAttr(today)}"><input id="v11StepValue" type="number" min="0" placeholder="Pasos" value="${todaySteps||""}"><button onclick="v11SaveSteps()">Guardar pasos</button></div><div class="empty">HTML: registro manual. APK: se leerán automáticamente desde Android cuando implementemos el sensor/Health Connect.</div></div>
+  <div class="dash-card"><h3>Movilidad · auto-registro 1–5</h3><div class="kpis"><div class="kpi info"><div class="v">${mobStats.shoulder}</div><div class="l">Hombros</div></div><div class="kpi info"><div class="v">${mobStats.ankle}</div><div class="l">Tobillos</div></div><div class="kpi info"><div class="v">${mobStats.thoracic}</div><div class="l">Torácica</div></div></div><div class="mobility-entry"><input id="v11MobDate" type="date" value="${escapeAttr(today)}"><input id="v11MobShoulder" type="number" min="1" max="5" placeholder="Hombro 1–5"><input id="v11MobAnkle" type="number" min="1" max="5" placeholder="Tobillo 1–5"><input id="v11MobThoracic" type="number" min="1" max="5" placeholder="Torácica 1–5"></div><div class="actions"><button class="secondary" onclick="v11SaveMobility()">Guardar movilidad</button></div></div>
   <div class="dash-card"><h3>Esta semana · trabajo en seco</h3><div class="week-status">${sts.map(x=>`<div class="session-mini"><div class="date">${fmtDate(x.date)}</div><div class="name">${v11Mode()==="adaptive"?`${V11_DAY_NAMES[v11DryWeekday(x.day)]} · ${x.day==="martes"?"Fuerza A":x.day==="jueves"?"Fuerza B":"Mov/Core"}`:BASE_PLANS[x.day].title}</div><span class="pill ${statusClass(x.status)}">${statusText(x.status)}</span></div>`).join("")||'<div class="empty">Todavía sin seguimiento.</div>'}</div></div>
-  <div class="dash-card"><h3>Cambios recientes</h3><div class="progress-list">${metrics.length?metrics.map(({latest,prev})=>{const d=prev?latest.value-prev.value:null,cls=d===null?"same":d>0?"up":d<0?"down":"same",sym=d===null?"Nuevo":d>0?`↑ +${Math.round(d*10)/10}`:d<0?`↓ ${Math.round(d*10)/10}`:"= 0";return`<div class="progress-item"><div><div class="name">${latest.name} · ${latest.metric}</div><div class="sub">${latest.value} ${latest.unit} · ${fmtDate(latest.date)}${prev?` · anterior ${prev.value}`:""}</div></div><div class="delta ${cls}">${sym}</div></div>`}).join(""):'<div class="empty">Aún no hay suficientes registros.</div>'}</div></div>
-  <div class="dash-card"><h3>Historial reciente</h3><div class="history">${recent.map(r=>`<div class="history-row"><div class="d">${fmtDate(r.date)}</div><div><div class="n">${r.plan}</div><div class="extra">${r.type==="swim"?r.extra:`${r.completedExercises}/${r.totalExercises} ejercicios · ${humanDuration(r.durationSec||0)}${r.skippedExercises?` · ${r.skippedExercises} omitidos`:""}`}</div></div><span class="pill ${statusClass(r.status)}">${r.type==="swim"?"Hecha":statusText(r.status)}</span></div>`).join("")||'<div class="empty">Todavía no hay historial.</div>'}</div></div>
+  <div class="dash-card"><h3>Cambios recientes</h3><div class="progress-list">${metrics.length?metrics.map(({latest,prev})=>{const d=prev?latest.value-prev.value:null,cls=d===null?"same":d>0?"up":d<0?"down":"same",sym=d===null?"Nuevo":d>0?`↑ +${Math.round(d*10)/10}`:d<0?`↓ ${Math.round(d*10)/10}`:"= 0";return`<div class="progress-item"><div><div class="name">${escapeHtml(latest.name)} · ${escapeHtml(latest.metric)}</div><div class="sub">${latest.value} ${escapeHtml(latest.unit)} · ${fmtDate(latest.date)}${prev?` · anterior ${prev.value}`:""}</div></div><div class="delta ${cls}">${sym}</div></div>`}).join(""):'<div class="empty">Aún no hay suficientes registros.</div>'}</div></div>
+  <div class="dash-card"><h3>Historial reciente</h3><div class="history">${recent.map(r=>`<div class="history-row"><div class="d">${fmtDate(r.date)}</div><div><div class="n">${escapeHtml(r.plan)}</div><div class="extra">${r.type==="swim"?escapeHtml(r.extra):`${r.completedExercises}/${r.totalExercises} ejercicios · ${humanDuration(r.durationSec||0)}${r.skippedExercises?` · ${r.skippedExercises} omitidos`:""}`}</div></div><span class="pill ${statusClass(r.status)}">${r.type==="swim"?"Hecha":statusText(r.status)}</span></div>`).join("")||'<div class="empty">Todavía no hay historial.</div>'}</div></div>
   <div class="dash-card"><h3>Respaldo</h3><div class="backup-actions"><button onclick="exportBackup()">Exportar JSON</button><label onclick="document.getElementById('importFile').click()">Importar respaldo</label></div><div class="empty">Incluye fuerza, movilidad, ejercicios personalizados y piscina.</div></div>`
 }
 
 /* reset/backup */
 function resetCurrent(){if(!BASE_PLANS[current])return;const day=current,date=activeDate(day);if(!confirm(`¿Reiniciar ${fmtDate(date)}?`))return;planItems(day).forEach((it,i)=>{const count=sessionSetCount(day,date,i,it[1]),cfg=timedCfg(day,i,it);["done","weight","minutes","band","rpe","rir","holdDuration","sets","rest","skip"].forEach(f=>localStorage.removeItem(EX(day,date,i,f)));for(let s=0;s<count;s++){localStorage.removeItem(SET(day,date,i,s));localStorage.removeItem(REP(day,date,i,s))}if(cfg)for(let b=0;b<boutCount(cfg,count);b++)localStorage.removeItem(HOLD(day,date,i,b))});["startedAt","finishedAt","notes"].forEach(f=>localStorage.removeItem(K(day,date,f)));const h=history();delete h[`${date}|${day}`];saveHistory(h);hideTimer();renderPlan(day);toast("Sesión reiniciada")}
 function exportBackup(){const data={version:"11.3-v10.1-base",exportedAt:new Date().toISOString(),storage:{}};for(let i=0;i<localStorage.length;i++){const key=localStorage.key(i);if(key?.startsWith("rutina-v10"))data.storage[key]=localStorage.getItem(key)}const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`lagartija-nadadora-v11-3-${localISO()}.json`;a.click();URL.revokeObjectURL(a.href)}
-function importBackup(file){if(!file)return;const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(r.result);if(!d.storage)throw new Error("Formato no válido");if(!confirm("¿Reemplazar los datos V10 actuales?"))return;const keys=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k?.startsWith("rutina-v10"))keys.push(k)}keys.forEach(k=>localStorage.removeItem(k));Object.entries(d.storage).forEach(([k,v])=>localStorage.setItem(k,v));["martes","jueves","sabado"].forEach(renderPlan);renderSwim();renderDashboard();toast("Respaldo importado ✓")}catch(e){alert("No pude importar: "+e.message)}document.getElementById("importFile").value=""};r.readAsText(file)}
+function importBackup(file){
+  if(!file)return;
+  if(file.size>8_500_000){alert("El respaldo es demasiado grande.");document.getElementById("importFile").value="";return}
+  const r=new FileReader();
+  r.onload=()=>{
+    try{
+      const d=JSON.parse(r.result);
+      if(!d||!isPlainObject(d)||!isPlainObject(d.storage))throw new Error("Formato no válido");
+      const safeStorage=sanitizeBackupStorage(d.storage);
+      if(!confirm("¿Reemplazar los datos V10 actuales con este respaldo validado?"))return;
+      const keys=[];
+      for(let i=0;i<localStorage.length;i++){
+        const k=localStorage.key(i);
+        if(k?.startsWith("rutina-v10"))keys.push(k)
+      }
+      keys.forEach(k=>localStorage.removeItem(k));
+      Object.entries(safeStorage).forEach(([k,v])=>localStorage.setItem(k,v));
+      ["martes","jueves","sabado"].forEach(renderPlan);
+      renderSwim();renderLibrary();renderSettings();renderDashboard();renderDynamicWeek();
+      toast("Respaldo importado y validado ✓")
+    }catch(e){
+      alert("No pude importar: "+e.message)
+    }
+    document.getElementById("importFile").value=""
+  };
+  r.readAsText(file)
+}
 function toggleDetails(btn){const d=btn.closest(".cardbody").querySelector(".details");d.classList.toggle("open");btn.textContent=d.classList.contains("open")?"Ocultar técnica":"Ver técnica"}
 function openModal(key){document.getElementById("modalImg").src=VISUALS[key];document.getElementById("modal").classList.add("open");document.body.style.overflow="hidden"}
 function closeModal(e){if(e)e.stopPropagation();document.getElementById("modal").classList.remove("open");document.body.style.overflow=""}
