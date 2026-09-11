@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#061421">
-<title>Rutina piscina · V10 Final</title>
+<title>Rutina piscina · V10.1</title>
 <style>
 :root{
   --bg:#061421;--panel:#0c1c2c;--panel2:#10263b;--line:#23415d;
@@ -36,9 +36,18 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
 .skipped-label{display:inline-block;margin-top:7px;padding:5px 8px;border-radius:999px;background:#3a2914;border:1px solid #a97736;color:#ffd08a;font-size:.69rem;font-weight:850}
 .quick-summary{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}.qpill{border:1px solid #2c4a62;background:#091927;border-radius:999px;padding:5px 8px;font-size:.68rem;color:#b8cbdb}.qpill strong{color:#fff}.qpill.pr{border-color:#9c7b2f;background:#332811;color:#ffd979}
 .track-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:11px}.field{padding:9px;border:1px solid #294861;background:#091928;border-radius:11px}.field label{display:block;color:var(--muted);font-size:.69rem;margin-bottom:5px}.field input,.field select{width:100%;background:#10253a;color:#fff;border:1px solid #355671;border-radius:8px;padding:8px}.field small{display:block;color:#6fdcff;margin-top:5px;font-size:.66rem;min-height:1em}
-.series-panel{margin-top:11px;padding:10px;border:1px solid #284861;background:#0a1826;border-radius:12px}.series-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;color:var(--muted);font-size:.76rem}.series-head b{color:#fff}.rest-hint{color:#83dfff;white-space:nowrap}
-.set-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:9px}.mini-btn{border:1px solid #385c76;background:#10273c;color:#fff;border-radius:9px;padding:6px 9px;font-size:.72rem;font-weight:850}.set-count{font-weight:900;color:#fff;min-width:74px;text-align:center}.base-btn{margin-left:auto;border-color:#705f34;color:#ffd785}
-.rest-control{display:flex;align-items:center;gap:5px}.rest-control button{width:28px;height:28px;border:1px solid #385c76;background:#10273c;color:#fff;border-radius:8px;font-weight:900}.rest-control span{min-width:44px;text-align:center;color:#84dfff;font-weight:800}
+.series-panel{margin-top:11px;padding:10px;border:1px solid #284861;background:#0a1826;border-radius:12px}.series-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px;color:var(--muted);font-size:.76rem}.series-head b{color:#fff}.rest-hint{color:#83dfff;white-space:normal;text-align:right}
+.set-controls{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+.control-box{min-width:0;padding:9px;border:1px solid #294861;background:#0b1b2a;border-radius:11px}
+.control-title{display:block;margin-bottom:7px;color:#9eb4c8;font-size:.66rem;font-weight:850;text-transform:uppercase;letter-spacing:.04em}
+.control-line{display:grid;grid-template-columns:36px 1fr 36px;gap:6px;align-items:center}
+.control-line button{height:34px;border:1px solid #385c76;background:#10273c;color:#fff;border-radius:9px;font-weight:950;font-size:1rem}
+.control-value{min-width:0;text-align:center;color:#fff;font-weight:950;font-size:.82rem;white-space:nowrap}
+.control-value.rest-value{color:#84dfff}
+.base-save{width:100%;margin-top:7px;border:1px solid #705f34;background:#2d2616;color:#ffd785;border-radius:9px;padding:7px 8px;font-size:.69rem;font-weight:850}
+.mini-btn{border:1px solid #385c76;background:#10273c;color:#fff;border-radius:9px;padding:6px 9px;font-size:.72rem;font-weight:850}
+.set-count{font-weight:900;color:#fff;text-align:center}
+.rest-control{display:contents}
 .set-list{display:grid;gap:7px}.set-row{display:grid;grid-template-columns:54px 1fr 86px;gap:7px;align-items:center}.set-label{font-size:.75rem;font-weight:900;color:#cfe1ef}.rep-input{display:flex;align-items:center;gap:5px}.rep-input button{width:34px;height:34px;border:1px solid #365a74;background:#112a40;color:#fff;border-radius:9px;font-weight:900}.rep-input input{width:64px;text-align:center;background:#10253a;color:#fff;border:1px solid #355671;border-radius:9px;padding:7px}.finish-set{border:1px solid #37607e;background:#122a41;color:#fff;border-radius:10px;padding:9px 6px;font-size:.73rem;font-weight:850}.finish-set.done{border-color:#45c995;background:#123d31;color:#8ef0c4}
 .timed-panel{border-color:#3b607d;background:linear-gradient(145deg,#0a2032,#0a1826)}.duration-picker{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 10px}.duration-picker span{color:var(--muted);font-size:.75rem;align-self:center}.duration-btn{border:1px solid #355873;background:#10273b;color:#d9e8f2;border-radius:9px;padding:7px 10px;font-size:.75rem;font-weight:850}.duration-btn.active{border-color:#54d9a2;background:#123c31;color:#8ff0c7}.hold-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}.hold-btn{border:1px solid #37607e;background:#122a41;color:#fff;border-radius:11px;padding:10px 8px;font-size:.78rem;font-weight:850}.hold-btn.done{border-color:#45c995;background:#123d31;color:#8ef0c4}
 .actions{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap}.actions button{border:1px solid var(--line);background:#142a42;color:#fff;border-radius:10px;padding:8px 10px;font-size:.8rem}.actions .skip-btn{border-color:#7a6138;background:#342817;color:#ffd58d}.actions .delete-btn{border-color:#74404b;background:#311b22;color:#ffb1ba}
@@ -69,13 +78,42 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
 .footer{position:fixed;left:0;right:0;bottom:0;border-top:1px solid var(--line);background:rgba(4,13,22,.97);padding:9px 13px calc(9px + env(safe-area-inset-bottom));z-index:50}.footer .inner{max-width:1020px;margin:auto;display:flex;gap:7px}.footer button{flex:1;border:1px solid var(--line);background:#11273d;color:#fff;border-radius:12px;padding:10px 6px;font-weight:800;font-size:.75rem}.footer button.primary{border-color:#318f69;background:#12392d}.footer-note{margin:17px 2px 2px;color:var(--muted);font-size:.75rem;line-height:1.45}
 .toast{position:fixed;z-index:120;top:18px;left:50%;transform:translate(-50%,-20px);opacity:0;pointer-events:none;background:#10283c;color:#fff;border:1px solid #3f6986;border-radius:12px;padding:10px 13px;transition:.2s;font-size:.8rem}.toast.show{opacity:1;transform:translate(-50%,0)}
 @media(max-width:780px){.kpis{grid-template-columns:repeat(2,1fr)}.week-status{grid-template-columns:1fr}.track-grid{grid-template-columns:1fr 1fr}.swim-grid{grid-template-columns:1fr}.history-row{grid-template-columns:76px 1fr auto}}
-@media(max-width:580px){.tabs{gap:3px}.tab{font-size:.62rem;padding:10px 1px}.week{gap:3px}.day{font-size:.52rem;padding:7px 1px}.day b{font-size:.63rem}.hero h1{font-size:1.34rem}.visual{min-height:155px}.visual img{max-height:270px}.track-grid{grid-template-columns:1fr 1fr}.set-row{grid-template-columns:44px 1fr 78px}.rep-input input{width:52px}.form-grid{grid-template-columns:1fr}.timer-label b{max-width:210px}.timer-value{font-size:1.4rem}}
+@media(max-width:580px){
+  .tabs{gap:3px}.tab{font-size:.62rem;padding:10px 1px}
+  .week{gap:3px}.day{font-size:.52rem;padding:7px 1px}.day b{font-size:.63rem}
+  .hero h1{font-size:1.34rem}.visual{min-height:155px}.visual img{max-height:270px}
+  .track-grid{grid-template-columns:1fr 1fr}
+  .set-controls{grid-template-columns:1fr}
+  .control-box{padding:10px}
+  .control-line{grid-template-columns:40px 1fr 40px}
+  .control-line button{height:38px}
+  .base-save{padding:8px}
+  .series-head{align-items:flex-start}
+  .rest-hint{width:100%;text-align:left;font-size:.69rem}
+  .set-row{grid-template-columns:38px minmax(0,1fr) 78px;gap:6px}
+  .rep-input{min-width:0;justify-content:center}
+  .rep-input button{width:32px;min-width:32px}
+  .rep-input input{width:54px;min-width:0}
+  .finish-set{width:78px}
+  .form-grid{grid-template-columns:1fr}.timer-label b{max-width:210px}.timer-value{font-size:1.4rem}
+}
+
+@media(max-width:390px){
+  .cardbody{padding:11px}
+  .series-panel{padding:9px}
+  .set-row{grid-template-columns:32px minmax(0,1fr) 72px}
+  .set-label{font-size:.7rem}
+  .rep-input{gap:3px}
+  .rep-input button{width:29px;min-width:29px;height:32px}
+  .rep-input input{width:48px;padding:6px 3px}
+  .finish-set{width:72px;padding:8px 3px;font-size:.69rem}
+}
 </style>
 </head>
 <body>
 <div class="app">
 <header class="hero">
-  <h1>Rutina de preparación para piscina · V10 Final</h1>
+  <h1>Rutina de preparación para piscina · V10.1</h1>
   <p>Rutina, progresión, sesiones personalizadas, descansos editables, modo piscina y Dashboard.</p>
   <div class="chips"><span class="chip">Local y sin cuenta adicional</span><span class="chip">Backup JSON</span><span class="chip">Series editables</span></div>
 </header>
@@ -84,7 +122,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}
   <div class="day swim"><b>Lun</b>Natación</div><div class="day fa"><b>Mar</b>Fuerza A</div><div class="day swim"><b>Mié</b>Natación</div><div class="day fb"><b>Jue</b>Fuerza B</div><div class="day swim"><b>Vie</b>Natación</div><div class="day mob"><b>Sáb</b>Mov/Core</div><div class="day rest"><b>Dom</b>Descanso</div>
 </div>
 
-<div class="notice"><b>V10:</b> puedes agregar/quitar series para hoy, guardar ese número como base, editar descansos, agregar ejercicios propios, omitir con motivo y registrar las sesiones de piscina.</div>
+<div class="notice"><b>V10.1:</b> mismos registros de la V10, con los controles de series y descanso reorganizados para que se vean correctamente en celular.</div>
 
 <nav class="tabs">
   <button class="tab active" data-tab="martes">Martes A</button>
@@ -235,7 +273,26 @@ function trackingFields(day,date,i,item){
 }
 function setControls(day,date,i,item){
   const count=sessionSetCount(day,date,i,item[1]),rest=sessionRest(day,date,i);
-  return `<div class="set-controls"><button class="mini-btn" onclick="changeSets('${day}',${i},-1)">− serie</button><span class="set-count">${count} series</span><button class="mini-btn" onclick="changeSets('${day}',${i},1)">+ serie</button><button class="mini-btn base-btn" onclick="saveSetsAsBase('${day}',${i})">Guardar base</button><div class="rest-control"><button onclick="changeRest('${day}',${i},-15)">−</button><span>${rest}s</span><button onclick="changeRest('${day}',${i},15)">+</button><button class="mini-btn base-btn" onclick="saveRestAsBase('${day}',${i})">Base</button></div></div>`
+  return `<div class="set-controls">
+    <div class="control-box">
+      <span class="control-title">Cantidad de series</span>
+      <div class="control-line">
+        <button aria-label="Quitar una serie" onclick="changeSets('${day}',${i},-1)">−</button>
+        <span class="control-value">${count} ${count===1?"serie":"series"}</span>
+        <button aria-label="Agregar una serie" onclick="changeSets('${day}',${i},1)">+</button>
+      </div>
+      <button class="base-save" onclick="saveSetsAsBase('${day}',${i})">Guardar series como base</button>
+    </div>
+    <div class="control-box">
+      <span class="control-title">Descanso entre series</span>
+      <div class="control-line">
+        <button aria-label="Restar 15 segundos" onclick="changeRest('${day}',${i},-15)">−</button>
+        <span class="control-value rest-value">${rest}s</span>
+        <button aria-label="Sumar 15 segundos" onclick="changeRest('${day}',${i},15)">+</button>
+      </div>
+      <button class="base-save" onclick="saveRestAsBase('${day}',${i})">Guardar descanso como base</button>
+    </div>
+  </div>`
 }
 function seriesPanel(day,date,i,item){
   const count=sessionSetCount(day,date,i,item[1]);if(!count)return "";
